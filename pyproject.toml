@@ -1,0 +1,13 @@
+[project]
+name = "weather-assistant"
+version = "1.0.0"
+description = "A CLI personal assistant that fuses a local calendar with live weather to synthesise practical advice."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = []  # standard library only — by design (see specs/PRD.md, NFR1)
+
+[tool.pytest.ini_options]
+# Lets `pytest` discover the package and the tests from the repo root,
+# matching how `python -m unittest discover -s tests` already works.
+pythonpath = ["."]
+testpaths = ["tests"]

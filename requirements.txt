@@ -1,0 +1,8 @@
+# Runtime dependencies: NONE.
+#
+# This project deliberately uses only the Python 3 standard library
+# (urllib, json, datetime, dataclasses, unittest) so it runs anywhere with
+# zero `pip install` and no API key. See specs/PRD.md (NFR1).
+#
+# Optional, for a nicer test run only:
+#   pytest>=7.0
