@@ -101,7 +101,8 @@ practical, concise, safety-first, never preachy.
 
 | Command | Behaviour |
 |---|---|
-| `brief [location]` | The headline feature. For each event, find the weather at its time/place and print the synthesised advice. |
+| `brief` | The headline feature. For each event, find the weather at its own time/place and print the synthesised advice. |
+| `brief <location>` | Same, but weather *every* event as if the whole day were in `<location>` (a "what if I were in San Jose today" view); a note makes the override explicit. |
 | `weather [location]` | Current conditions for a city (defaults to home). |
 | `agenda` | The plain schedule, no weather. |
 | `home <location>` | Change the session's home/base city. |

@@ -130,6 +130,17 @@ class LookupGeocodingFallback(unittest.TestCase):
         event = make_event(location="Nowhere City")
         self.assertIsNone(lookup(event))
 
+    def test_override_location_applies_to_every_event(self):
+        # `brief San Jose` should weather a Honolulu event against San Jose.
+        client = self.PickyClient(fixture_hours(), known="San Jose")
+        lookup = make_lookup(client, AppConfig(), override_location="San Jose")
+        event = make_event(
+            location="Waikiki Beach, Honolulu",
+            start="2026-06-20T06:30:00", end="2026-06-20T07:15:00",
+        )
+        self.assertIsNotNone(lookup(event))        # used the override, not Honolulu
+        self.assertEqual(client.queries, ["San Jose"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -55,13 +55,22 @@ def match_hourly(
     return min(dated, key=lambda s: abs((s.time - when).total_seconds()))
 
 
-def make_lookup(client: OpenMeteoClient, config: AppConfig) -> WeatherLookup:
+def make_lookup(
+    client: OpenMeteoClient,
+    config: AppConfig,
+    override_location: Optional[str] = None,
+) -> WeatherLookup:
     """Build a caching weather lookup backed by the live Open-Meteo client.
 
     Geocoding + forecasting is cached per location string so a five-event day
     in two places makes two network round-trips, not five. Any
     :class:`WeatherUnavailable` is swallowed and surfaced as ``None`` so the
     briefing degrades gracefully instead of crashing.
+
+    If ``override_location`` is given, *every* event is weathered against that
+    place instead of its own location — i.e. "show me the day as if I were in
+    San Jose." Otherwise each event uses its own location, falling back to the
+    configured home.
     """
     cache: Dict[str, List[WeatherSnapshot]] = {}
 
@@ -85,7 +94,7 @@ def make_lookup(client: OpenMeteoClient, config: AppConfig) -> WeatherLookup:
         return snapshots
 
     def lookup(event: Event) -> Optional[WeatherSnapshot]:
-        place = event.location or config.home_location
+        place = override_location or event.location or config.home_location
         return match_hourly(event.start, forecast_for(place))
 
     return lookup

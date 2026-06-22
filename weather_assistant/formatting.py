@@ -153,7 +153,8 @@ def render_help() -> str:
     return "\n".join(
         [
             "Commands:",
-            "   brief [location]   Weather-aware rundown of today's schedule",
+            "   brief              Weather-aware rundown of today's schedule",
+            "   brief <location>   ...as if your whole day were in <location>",
             "   weather [location] Current conditions (defaults to home)",
             "   agenda             Show the schedule with no weather",
             "   home <location>    Change your home base for this session",

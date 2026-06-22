@@ -73,16 +73,22 @@ class Assistant:
         except CalendarError as exc:
             return f"⚠️  {exc}"
 
-        config = self.config.with_home(location) if location else self.config
-        lookup = make_lookup(self.client, config)
+        override = location or None
+        lookup = make_lookup(self.client, self.config, override_location=override)
         briefing = build_daily_briefing(
             events,
             lookup,
-            location=config.home_location,
-            thresholds=config.thresholds,
+            location=override or self.config.home_location,
+            thresholds=self.config.thresholds,
             on_date=datetime.now().date(),
-            keywords=config.outdoor_keywords,
+            keywords=self.config.outdoor_keywords,
         )
+        if override:
+            briefing.notes.insert(
+                0,
+                f"Weather shown as if your whole day were in {override}. "
+                "Run 'brief' with no location to use each event's own place.",
+            )
         return formatting.render_daily_briefing(briefing)
 
     # -- routing --------------------------------------------------------------
