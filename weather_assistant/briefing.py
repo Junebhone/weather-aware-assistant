@@ -20,7 +20,7 @@ from typing import Callable, Dict, List, Optional, Sequence
 from . import advisor
 from .config import DEFAULT_OUTDOOR_KEYWORDS, AppConfig, Thresholds
 from .models import DailyBriefing, Event, EventBriefing, WeatherSnapshot
-from .weather import OpenMeteoClient, WeatherUnavailable
+from .weather import OpenMeteoClient, WeatherUnavailable, location_candidates
 
 WeatherLookup = Callable[[Event], Optional[WeatherSnapshot]]
 
@@ -65,14 +65,28 @@ def make_lookup(client: OpenMeteoClient, config: AppConfig) -> WeatherLookup:
     """
     cache: Dict[str, List[WeatherSnapshot]] = {}
 
+    def forecast_for(place: str) -> List[WeatherSnapshot]:
+        if place in cache:
+            return cache[place]
+        # Try the full venue string, then progressively more general queries
+        # (its city), then the configured home as a final fallback.
+        queries = location_candidates(place)
+        if config.home_location not in queries:
+            queries.append(config.home_location)
+        snapshots: List[WeatherSnapshot] = []
+        for query in queries:
+            try:
+                snapshots = client.hourly_forecast(query, config.forecast_days)
+            except WeatherUnavailable:
+                continue
+            if snapshots:
+                break
+        cache[place] = snapshots
+        return snapshots
+
     def lookup(event: Event) -> Optional[WeatherSnapshot]:
         place = event.location or config.home_location
-        if place not in cache:
-            try:
-                cache[place] = client.hourly_forecast(place, config.forecast_days)
-            except WeatherUnavailable:
-                cache[place] = []
-        return match_hourly(event.start, cache[place])
+        return match_hourly(event.start, forecast_for(place))
 
     return lookup
 

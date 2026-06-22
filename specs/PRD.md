@@ -160,6 +160,34 @@ An LLM layer is a clean future extension (see §12): the `Advice` objects this
 engine returns could be handed to an LLM purely for *phrasing*, while the
 *decisions* remain rule-based and tested.
 
+### 6.4 Worked example (input → processing → output)
+
+This is the `brief` command for one event, end to end, so the data flow is
+unambiguous:
+
+1. **Calendar input** — `{"title": "Sunrise Beach Run", "start":
+   "...T06:30:00", "location": "Waikiki Beach, Honolulu"}`.
+2. **Geocode + forecast** — `weather.py` resolves "Waikiki Beach, Honolulu" to
+   coordinates and pulls the hourly forecast (cached per location).
+3. **Match the hour** — `briefing.match_hourly` finds the 06:00 forecast slot:
+   `WeatherSnapshot(category=RAIN, temp=23 °C, precip_prob=80%, wind=18 km/h)`.
+4. **Outdoor check** — `advisor.is_outdoor_event` sees "run" + "Beach" ⇒ outdoor.
+5. **Apply rules** — R3 (wet) fires ⇒ *bus + rain protection*; R3a (wet +
+   outdoor) ⇒ *move indoors/reschedule*. Temp 23 °C and wind 18 km/h trip no
+   threshold, so no clothing/wind advice; positive advice is suppressed because
+   higher-severity advice already fired.
+6. **Render** — `formatting.py` turns the `Advice` objects into:
+
+   ```text
+   🔹 06:30–07:15  Sunrise Beach Run @ Waikiki Beach, Honolulu
+      🌧️ 23°C, Slight rain, wind 18 km/h, rain 80%
+      🌧️ Rain is likely — take the bus instead of walking or cycling, and pack an umbrella or a waterproof jacket.
+      🏠 This looks like an outdoor activity in the wet — consider moving it indoors or rescheduling to a drier window.
+   ```
+
+7. **Print** — `cli.py` writes that string to the terminal. Steps 1–6 contain
+   no `print`; only step 7 does.
+
 ## 7. Architecture & Separation of Concerns
 
 The non-negotiable architectural rule: **logic never prints; UI never decides.**
@@ -238,23 +266,52 @@ health, safety, general}` and `severity ∈ {info, caution, warning}`.
 - **NFR5 — Network politeness.** One geocode + one forecast per unique location,
   cached for the briefing.
 
+### 9.1 Edge cases & error handling
+
+The assistant is expected to handle the following without crashing:
+
+| Situation | Expected behaviour |
+|---|---|
+| No internet / API down / timeout | `WeatherUnavailable` is caught; schedule still shows, with a "(weather unavailable)" note. |
+| Event location is a descriptive venue ("X Building, City") | Geocoding falls back from the full string → its city → home base, so it still resolves (`weather.location_candidates`). |
+| City name truly not found by geocoder | `weather <city>` shows a friendly "Could not find a place called '…'."; in a briefing the event is marked "(weather unavailable)". |
+| `calendar.json` missing | Clear `CalendarError`: "Calendar file not found: …". |
+| `calendar.json` not valid JSON | `CalendarError` quoting the JSON parse error. |
+| Event missing a field / bad datetime / `end` < `start` | `CalendarError` naming the event index and the problem. |
+| Empty calendar | Valid; briefing says "Your calendar is empty. Enjoy the open day!". |
+| Event date outside the forecast window | Matched to today's forecast by hour-of-day (routine semantics). |
+| Unknown WMO weather code | Categorised as `UNKNOWN` with a descriptive label, never an exception. |
+| Unknown REPL command | "Unknown command: '…'. Type 'help' for options." |
+| Exception inside a command | Caught by the REPL guard; prints a message, loop continues. |
+
 ## 10. Testing Strategy & Acceptance Criteria
 
 Tests live in `tests/` and run with `python -m unittest discover -s tests` —
-**no network, no dependencies.**
+**no network, no dependencies.** The suite is **83 tests** across 8 files and
+completes in well under a second. The network is never touched: weather is
+served from a captured fixture (`tests/fixtures/sample_forecast.json`) and an
+injected in-memory lookup.
 
-**Acceptance criteria (the guardrails):**
-- **AC1** — Rain (or high rain probability) ⇒ advice contains "bus" + rain
-  protection. *(the canonical rubric test)*
-- **AC2** — Clear, mild weather ⇒ no "bus"/"umbrella"; severity stays Info.
-- **AC3** — Thunderstorm and freezing and gale wind ⇒ Warning severity.
-- **AC4** — Hot ⇒ hydrate + sunscreen; Cold ⇒ jacket/coat.
-- **AC5** — Thresholds are data: the same weather flips outcome under different
-  `Thresholds`.
-- **AC6** — WMO codes map to the correct categories; Open-Meteo JSON parses into
-  the right snapshots (fixture-driven).
-- **AC7** — Malformed calendars raise a clear `CalendarError`.
-- **AC8** — Missing weather degrades gracefully (briefing still produced).
+**Acceptance criteria → the test(s) that prove them (traceability):**
+
+| AC | Requirement | Proven by |
+|---|---|---|
+| **AC1** | Rain (or high rain probability) ⇒ advice says "bus" + rain protection *(the canonical rubric test)* | `test_advisor.RainCommuteRules`, `test_briefing.test_rainy_morning_run_gets_bus_advice`, `test_cli.test_brief_gives_weather_aware_advice` |
+| **AC2** | Clear, mild weather ⇒ no "bus"/"umbrella"; severity stays Info | `test_advisor.test_clear_weather_does_not_suggest_a_bus_or_umbrella`, `test_advisor.PleasantWeather` |
+| **AC3** | Thunderstorm / freezing / gale wind ⇒ Warning severity | `test_advisor.SevereWeatherRules`, `test_advisor.test_freezing_warns_about_ice` |
+| **AC4** | Hot ⇒ hydrate + sunscreen; Cold ⇒ jacket/coat | `test_advisor.TemperatureRules`, `test_advisor.CombinedAndBoundaryRules` |
+| **AC5** | Thresholds are data: same weather flips outcome under different `Thresholds` | `test_advisor.ThresholdsAreData`, `test_config.*` |
+| **AC6** | WMO codes map correctly; Open-Meteo JSON parses into right snapshots | `test_weather.CategorizeWmoCodes`, `test_weather.ParseCurrent`, `test_weather.ParseHourly` |
+| **AC7** | Malformed calendars raise a clear `CalendarError` | `test_calendar_loader.Validation`, `test_calendar_loader.LoadFromDisk` |
+| **AC8** | Missing weather degrades gracefully (briefing + CLI still work) | `test_briefing.test_missing_weather_degrades_gracefully`, `test_cli.test_brief_offline_still_shows_the_schedule` |
+| **AC9** | Output surfaces the right content (bus advice, unavailable notes, agenda) | `test_formatting.*` |
+| **AC10** | **Architecture is enforced:** logic modules never `print`/`input`; the brain doesn't import the UI | `test_architecture.*` |
+
+**Guardrails-as-architecture.** AC10 is unusual and deliberate: `test_architecture.py`
+parses the source of every logic module and fails the build if any of them calls
+`print()`/`input()`, or if the advice engine imports the UI/network layers. The
+rubric's "logic separated from UI" is therefore not a convention we hope holds —
+it is a property the test suite *guarantees* on every run.
 
 ## 11. Key Design Decisions (rationale)
 
@@ -282,3 +339,22 @@ Tests live in `tests/` and run with `python -m unittest discover -s tests` —
 - `python run.py brief` returns sensible, weather-appropriate advice for the
   sample day (proves G1).
 - Killing the network still yields a readable briefing (proves G4).
+
+## 14. Assumptions & Open Questions
+
+**Assumptions** (true for v1; revisit if they break):
+- The user runs Python 3.9+ and has occasional internet for live weather.
+- Open-Meteo's free tier and current response shape remain stable.
+- A calendar represents a typical **daily routine**, so matching event times to
+  *today's* forecast by hour-of-day is meaningful (see §6.4 / Data Contracts).
+- Metric units are acceptable as the default.
+- One forecast location per event is sufficient (no multi-leg journeys).
+
+**Open questions** (deferred, not blocking):
+- Should advice consider the *commute window before* an event, not just its
+  start hour? (e.g. leave-by time.) — leaning yes, future work.
+- For multi-day calendars, do we brief "today only" or the whole forecast
+  window? v1 briefs by matched hour; a `--date` selector is a likely addition.
+- Is an optional LLM phrasing layer worth the added dependency/key for the
+  persona gain? (See §6.3 and §12.) — only behind a flag, decisions stay rule-based.
+- Should units (°C/°F, km/h/mph) be user-configurable in v1? Currently metric-only.

@@ -40,6 +40,19 @@ for you. Think a good cycling buddy, not a TV meteorologist.
 - **Don't nag.** If conditions are unremarkable, the right output is a short
   "you're good to go," not manufactured concern.
 
+**Voice examples — say this, not that:**
+
+| Situation | ✅ Say | ❌ Don't say |
+|---|---|---|
+| Rain during a commute | "Rain is likely — take the bus and pack a jacket." | "Precipitation probability is 80%; consider your mobility options." |
+| Cold morning | "Cold out (~4°C) — bundle up with a warm jacket." | "You should really wear a coat or you'll regret it." |
+| Lovely day | "Great conditions — walking or cycling will be pleasant." | "Weather is acceptable for outdoor transit modalities." |
+| Weather can't be fetched | "(weather unavailable)" + show the schedule | *(silence, or a fake/guessed forecast)* |
+| Nothing notable | "Nothing to flag — you're good to go." | A paragraph manufacturing mild concerns. |
+
+These examples are the persona's fingerprint: lead with the action, keep it to a
+sentence, stay warm, and never invent data.
+
 ---
 
 ## Part B — Engineering Constraints (rules for the AI builder)
@@ -53,8 +66,9 @@ They map directly onto the grading rubric.
   **zero** `print()` / `input()` calls.
 - **`cli.py` is the only module allowed to do terminal I/O.**
 - `formatting.py` converts data → strings but never prints them itself.
-- *Test of compliance:* `grep -rn "print(" weather_assistant/` returns hits only
-  in `cli.py`.
+- *Test of compliance:* enforced automatically by `tests/test_architecture.py`,
+  which parses every logic module's AST and fails if it finds a `print()`/`input()`
+  call. (Quick manual check: `grep -rn "print(" weather_assistant/` hits only `cli.py`.)
 
 ### B2. The advice engine is a pure function
 - Signature: `advise(event, weather, thresholds) -> List[Advice]`.
@@ -94,3 +108,29 @@ They map directly onto the grading rubric.
 
 > If a generated change violated any rule in Part B, it was rejected and
 > re-steered — see the **Vibe Report** in the README for where that happened.
+
+---
+
+## Part C — Definition of Done & Steering Patterns
+
+### Definition of Done (a change isn't "done" until all of these hold)
+- [ ] New behaviour lives in the right layer (logic vs UI per **B1**).
+- [ ] Any new advice rule is added to the PRD decision table **and** has a test.
+- [ ] Thresholds/strings that encode policy live in `config.py`, not in logic (**B4**).
+- [ ] `python -m unittest discover -s tests` is green, **offline**.
+- [ ] `tests/test_architecture.py` still passes (no `print`/`input` leaked into logic).
+- [ ] Failure modes degrade gracefully; nothing new can crash the REPL (**B5**).
+- [ ] No new third-party dependency and no API key introduced (**B7**).
+
+### Steering patterns that worked (for re-steering a drifting agent)
+- **Name the layer.** "This belongs in `formatting`, not `advisor` — the engine
+  returns `Advice`, it doesn't format." Anchors the fix to a rule, not taste.
+- **Demand the test first.** "Before you change the rule, write the failing test
+  that captures the behaviour we want." Forces intent to be explicit.
+- **Point back at the doc.** "Re-read **B1** and try again" beats re-explaining.
+  The PRD and this file are the durable context; reuse them instead of re-typing.
+- **Constrain, don't dictate.** Give the *property* ("pure function, no I/O"),
+  not the line-by-line code — then let the agent fill it in and verify against
+  the constraint.
+- **One concern per turn.** Fix the separation, run tests, *then* tune the rule.
+  Bundled asks are where drift hides.

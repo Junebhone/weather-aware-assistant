@@ -74,6 +74,26 @@ def categorize(code: int) -> Tuple[WeatherCategory, str]:
     return WMO_CODE_MAP.get(code, (WeatherCategory.UNKNOWN, f"Unknown (code {code})"))
 
 
+def location_candidates(location: str) -> List[str]:
+    """Progressively more general geocoding queries for a descriptive location.
+
+    Open-Meteo's geocoder matches place *names*, so a venue string like
+    "POST Building, UH Manoa, Honolulu" won't resolve — but its city suffix
+    "Honolulu" will. We try the full string first, then drop leading
+    comma-separated segments one at a time, ending at the most general part.
+
+    >>> location_candidates("Waikiki Beach, Honolulu")
+    ['Waikiki Beach, Honolulu', 'Honolulu']
+
+    This is pure (no network); :func:`briefing.make_lookup` walks the list until
+    one query returns a forecast.
+    """
+    parts = [p.strip() for p in location.split(",") if p.strip()]
+    if not parts:
+        return [location.strip()]
+    return [", ".join(parts[i:]) for i in range(len(parts))]
+
+
 def _parse_iso(value: Optional[str]) -> Optional[datetime]:
     if not value:
         return None

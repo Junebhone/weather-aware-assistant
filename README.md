@@ -12,7 +12,7 @@ myself. The reflection on that collaboration is the [Vibe Report](#-the-vibe-rep
 - ✅ **No API key** — uses the free, keyless [Open-Meteo](https://open-meteo.com) API
 - ✅ **No dependencies** — Python 3 standard library only
 - ✅ **No install step** — clone and run
-- ✅ **Logic fully separated from UI**, and **44 tests** that never touch the network
+- ✅ **Logic fully separated from UI**, and **83 tests** that never touch the network
 
 ---
 
@@ -61,7 +61,7 @@ python -m unittest discover -s tests        # standard library, zero setup
 # or, if you have it:  pytest
 ```
 
-All 44 tests run **offline** — weather is faked from fixtures and an injected
+All 83 tests run **offline** — weather is faked from fixtures and an injected
 lookup, so the suite is fast and deterministic.
 
 ## Project structure
@@ -83,7 +83,7 @@ VibeCode/
 │   ├── briefing.py            # orchestration (calendar + weather + advice)
 │   ├── formatting.py          # data → display strings (pure)
 │   └── cli.py                 # the REPL — the ONLY module that prints
-└── tests/                     # the guardrails (44 tests, no network)
+└── tests/                     # the guardrails (83 tests, no network)
 ```
 
 ## Architecture in one sentence

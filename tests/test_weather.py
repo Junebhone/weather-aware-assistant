@@ -18,6 +18,7 @@ from weather_assistant.weather import (
     OpenMeteoClient,
     WeatherUnavailable,
     categorize,
+    location_candidates,
     parse_current,
     parse_hourly,
 )
@@ -105,6 +106,23 @@ class ClientUsesParsersWithoutNetwork(unittest.TestCase):
         with mock.patch.object(weather, "_http_get_json", return_value={"results": []}):
             with self.assertRaises(WeatherUnavailable):
                 client.current("Atlantis")
+
+
+class LocationCandidates(unittest.TestCase):
+    def test_descriptive_venue_falls_back_to_city(self):
+        self.assertEqual(
+            location_candidates("POST Building, UH Manoa, Honolulu"),
+            ["POST Building, UH Manoa, Honolulu", "UH Manoa, Honolulu", "Honolulu"],
+        )
+
+    def test_plain_city_is_unchanged(self):
+        self.assertEqual(location_candidates("Honolulu"), ["Honolulu"])
+
+    def test_handles_extra_whitespace(self):
+        self.assertEqual(
+            location_candidates(" Waikiki Beach ,  Honolulu "),
+            ["Waikiki Beach, Honolulu", "Honolulu"],
+        )
 
 
 if __name__ == "__main__":

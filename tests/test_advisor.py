@@ -168,5 +168,55 @@ class PleasantWeather(unittest.TestCase):
         self.assertIn("bus", messages(general_advice(weather)))
 
 
+class CombinedAndBoundaryRules(unittest.TestCase):
+    """Conditions rarely arrive one at a time — make sure they compose."""
+
+    def test_cold_and_rain_gives_both_a_jacket_and_the_bus(self):
+        weather = make_weather(
+            category=WeatherCategory.RAIN, weather_code=61, precipitation_mm=1.0,
+            precipitation_probability=90, temperature_c=5,
+        )
+        text = messages(advise(make_event(), weather))
+        self.assertIn("bus", text)
+        self.assertTrue("jacket" in text or "coat" in text or "warm" in text)
+
+    def test_drizzle_counts_as_wet(self):
+        weather = make_weather(
+            category=WeatherCategory.DRIZZLE, weather_code=51,
+            description="Light drizzle", precipitation_mm=0.3,
+            precipitation_probability=60, temperature_c=16,
+        )
+        self.assertIn("bus", messages(advise(make_event(), weather)))
+
+    def test_temperature_exactly_at_cold_threshold_triggers_cold_advice(self):
+        thresholds = Thresholds()
+        weather = make_weather(
+            temperature_c=thresholds.cold_c, category=WeatherCategory.CLOUDY
+        )
+        advice = advise(make_event(), weather, thresholds)
+        self.assertTrue(any(a.category == "clothing" for a in advice))
+
+    def test_wind_between_high_and_gale_is_caution_not_warning(self):
+        thresholds = Thresholds()
+        mid = (thresholds.high_wind_kmh + thresholds.gale_wind_kmh) / 2
+        weather = make_weather(
+            wind_speed_kmh=mid, temperature_c=20, category=WeatherCategory.CLEAR
+        )
+        advice = advise(make_event(), weather, thresholds)
+        self.assertTrue(advice)
+        self.assertEqual(max(a.severity for a in advice).rank, Severity.CAUTION.rank)
+
+    def test_pleasant_advice_is_suppressed_when_a_warning_fires(self):
+        # A thunderstorm must not be accompanied by "great day for a walk!".
+        weather = make_weather(
+            category=WeatherCategory.THUNDERSTORM, weather_code=95,
+            description="Thunderstorm", precipitation_mm=5.0,
+            precipitation_probability=95, temperature_c=21,
+        )
+        text = messages(advise(make_event(), weather))
+        self.assertNotIn("great conditions", text)
+        self.assertNotIn("enjoy", text)
+
+
 if __name__ == "__main__":
     unittest.main()

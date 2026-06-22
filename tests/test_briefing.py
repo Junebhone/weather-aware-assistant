@@ -10,9 +10,10 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 
-from weather_assistant.briefing import build_daily_briefing, match_hourly
+from weather_assistant.briefing import build_daily_briefing, make_lookup, match_hourly
+from weather_assistant.config import AppConfig
 from weather_assistant.models import Severity, WeatherCategory
-from weather_assistant.weather import parse_hourly
+from weather_assistant.weather import WeatherUnavailable, parse_hourly
 from tests.helpers import make_event, make_weather
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_forecast.json"
@@ -35,6 +36,13 @@ class MatchHourly(unittest.TestCase):
         hours = fixture_hours()
         snap = match_hourly(datetime.fromisoformat("2027-01-01T06:00"), hours)
         self.assertEqual(snap.category, WeatherCategory.RAIN)
+
+    def test_nearest_hour_is_the_last_resort(self):
+        # 02:00 has no exact match and no matching hour-of-day in the fixture
+        # (which only has 06,09,12,15,18) -> fall back to the nearest, 06:00.
+        hours = fixture_hours()
+        snap = match_hourly(datetime.fromisoformat("2026-06-20T02:00"), hours)
+        self.assertEqual(snap.time.hour, 6)
 
     def test_returns_none_when_no_snapshots(self):
         self.assertIsNone(match_hourly(datetime.now(), []))
@@ -82,6 +90,45 @@ class BuildDailyBriefing(unittest.TestCase):
     def test_empty_calendar_produces_empty_briefing(self):
         briefing = build_daily_briefing([], lambda event: None, location="Honolulu")
         self.assertEqual(briefing.items, [])
+
+
+class LookupGeocodingFallback(unittest.TestCase):
+    """A descriptive venue that the geocoder can't resolve should fall back to
+    its city, so a real calendar ("POST Building, UH Manoa, Honolulu") still
+    gets weather instead of silently coming back empty."""
+
+    class PickyClient:
+        """Only resolves a clean city name; rejects descriptive venue strings."""
+
+        def __init__(self, hours, known="Honolulu"):
+            self.hours = hours
+            self.known = known
+            self.queries = []
+
+        def hourly_forecast(self, location, days=3):
+            self.queries.append(location)
+            if location == self.known:
+                return self.hours
+            raise WeatherUnavailable(f"no match for '{location}'")
+
+    def test_falls_back_from_venue_to_city(self):
+        client = self.PickyClient(fixture_hours())
+        lookup = make_lookup(client, AppConfig())
+        event = make_event(
+            title="Standup", location="POST Building, UH Manoa, Honolulu",
+            start="2026-06-20T06:30:00", end="2026-06-20T07:15:00",
+        )
+        snapshot = lookup(event)
+        self.assertIsNotNone(snapshot)                      # weather was found
+        self.assertEqual(snapshot.category, WeatherCategory.RAIN)
+        self.assertEqual(client.queries[0], "POST Building, UH Manoa, Honolulu")
+        self.assertIn("Honolulu", client.queries)           # fell back to the city
+
+    def test_unresolvable_location_returns_none_without_crashing(self):
+        client = self.PickyClient(fixture_hours(), known="Atlantis")
+        lookup = make_lookup(client, AppConfig())
+        event = make_event(location="Nowhere City")
+        self.assertIsNone(lookup(event))
 
 
 if __name__ == "__main__":
