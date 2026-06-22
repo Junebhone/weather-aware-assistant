@@ -107,96 +107,134 @@ exploit this to prove the rules are data-driven, not hardcoded.
 > *Reflection on orchestrating the AI build. The professor is grading the
 > thinking process, so here is where the steering actually happened.*
 
-I gave the AI the [PRD](specs/PRD.md) and [rules.md](docs/rules.md) as context
-**first**, then had it build module by module. Treating those two documents as
-the durable "memory" of the project — and re-pointing the AI back at them
-whenever it wandered — was the single biggest lever I had. Here's where it
-mattered.
+My intent lived in two documents — the [PRD](specs/PRD.md) and
+[rules.md](docs/rules.md) — and they were the project's durable memory: the thing
+I re-pointed the AI back at whenever it wandered. But the honest story has two
+phases. **Phase one** was a fast build from a high-level brief — the AI scaffolded
+the whole modular system in one pass, and it *looked* finished. **Phase two**,
+where the real architecture work happened, was running the app, watching it lie or
+break, and steering the fixes. My single most effective steer wasn't a clever
+prompt at all — it was *pasting the wrong output back and saying "this isn't
+right."* Here's where it mattered.
 
 ### 1. Where did the AI's "vibe" drift?
 
-Three drifts, all in the same direction — **the AI kept wanting to collapse my
-layers back together** because that's the path of least resistance:
+The drifts came in two flavours.
 
-- **Print statements leaking into the brain.** Asked to "give weather advice,"
-  the AI's instinct was to write `print("It's raining, take the bus")` *inside*
-  the advice function. That's the most natural way to write a script — and it
-  quietly fuses logic and UI, which is exactly what the rubric (and rule **B1**)
-  forbid. I had to keep insisting the engine **return `Advice` objects** and let
-  a separate `formatting`/`cli` layer decide how they're shown.
-- **Magic numbers creeping back in.** It liked writing `if temp < 10:` directly
-  in the rules. Readable, but it buries policy in logic. I steered every
-  threshold out into `config.Thresholds` so the rules read `if temp <=
-  thresholds.cold_c` and a test can flip the threshold to prove the rule is
-  data-driven.
-- **Tests that quietly phone home.** Its first test instinct was to call the
-  *real* Open-Meteo API and assert on whatever came back — which makes the suite
-  slow, flaky, and offline-hostile. I redirected it to capture one real response
-  as a fixture and **inject** a fake weather lookup into the briefing, so the
-  whole pipeline is tested with the network unplugged.
-- **A smaller one — over-reaching for dependencies.** It reached for `requests`
-  and (later) an LLM call for the phrasing. I held the line on *standard library
-  only* and *rule-based synthesis* so a reviewer can run everything with a bare
-  Python install and zero keys. Documented the LLM idea as future work instead.
+**Design-time drift — the AI kept collapsing my layers back together,** because
+that's the path of least resistance:
+- **Print statements leaking into the brain.** Asked to "give weather advice," its
+  instinct was `print("take the bus")` *inside* the advice function — fusing logic
+  and UI, exactly what rule **B1** forbids. I kept insisting the engine *return
+  `Advice` objects* and let `formatting`/`cli` decide how they're shown.
+- **Magic numbers creeping in.** It wrote `if temp < 10:` in the rules; I steered
+  every threshold into `config.Thresholds` so a test can flip it and prove the rule
+  is data-driven.
+- **Tests that quietly phone home.** Its first tests called the *real* API; I
+  redirected them to a captured fixture plus an injected fake lookup, so the whole
+  suite runs with the network unplugged.
+- **Reaching for dependencies.** It wanted `requests`, then an LLM for the phrasing.
+  I held the line on standard-library-only and rule-based synthesis, and parked the
+  LLM idea as documented future work.
 
-The pattern: the AI optimises for "fewest lines to working output." My job as
-architect was to optimise for "boundaries that survive contact with a test."
+**Runtime drift — code that read fine but was wrong in the real world.** These only
+surfaced because I *ran* it:
+- **Geocoding the full venue string.** The AI geocoded `"POST Building, UH Manoa,
+  Honolulu"` verbatim. Open-Meteo only matches place *names*, so every event came
+  back "weather unavailable" and the headline feature looked dead. The code was
+  perfectly reasonable; reality disagreed.
+- **A `brief <location>` argument that did nothing visible.** Its first design let
+  the location set only a header *label* while each event quietly used its own place
+  — so `brief san jose` printed "(san jose)" above five lines of *Honolulu* weather.
+  Looked like a bug; was really a confused design.
+
+The pattern: the AI optimises for "fewest lines to working output." My job was to
+optimise for "behaviour that survives contact with a test *and* a real run."
 
 ### 2. When did I reach for the "Builder Hammer"?
 
-Twice the AI produced something that *ran* but was *logically wrong*, and I had
-to step in and design the fix by hand:
+Four times the AI produced something that *ran* but was *wrong*, and I had to step
+in and design the fix:
 
-- **The forecast-matching bug (the big one).** My `calendar.json` has events on
-  fixed dates, but a live forecast only covers the next few days. The AI's first
-  pass matched an event to weather by **exact timestamp** — so the moment the
-  calendar date fell outside the forecast window, *every* event came back
-  "weather unavailable" and the headline feature was dead on arrival. I hand-wrote
-  the three-tier `match_hourly` fallback in `briefing.py`: exact (date, hour) →
-  **same hour-of-day on today's forecast** → nearest hour. That "same hour-of-day"
-  rule is the insight that makes a routine calendar produce a real briefing on
-  *any* day you run it. It's also now pinned by its own test.
-- **Cheerful advice during a thunderstorm.** The engine happily appended "Great
-  conditions — enjoy a walk!" *next to* a storm warning, because each rule fired
-  independently. I added the guard that positive advice is only emitted when no
-  higher-severity rule fired. Small change, but it's the difference between an
-  assistant that feels thoughtful and one that feels broken.
+- **The geocoding fallback (caught live).** The first time I ran `brief` and saw
+  five "weather unavailable" lines, I knew the venue strings weren't resolving. The
+  fix wasn't "try harder" — it was a design: `location_candidates()` walks a
+  location from specific to general (`"POST Building, UH Manoa, Honolulu"` →
+  `"UH Manoa, Honolulu"` → `"Honolulu"`) and the lookup tries each until one
+  resolves, then falls back to home. Pure, and pinned by tests.
+- **The `brief <location>` redesign (caught live).** When `brief san jose` showed a
+  San-Jose header over Honolulu weather, I changed the semantics so the argument
+  weathers *every* event as if you were there, plus a note that makes the mode
+  explicit. A UX bug only a real run exposes.
+- **The forecast-matching bug.** Matching an event to weather by *exact timestamp*
+  meant any calendar date outside the forecast window returned nothing. I hand-wrote
+  the three-tier `match_hourly`: exact (date, hour) → **same hour-of-day on today's
+  forecast** → nearest. That middle tier is what lets a routine calendar work on any
+  day you run it.
+- **Cheerful advice during a thunderstorm.** Each rule fired independently, so
+  "enjoy a walk!" appeared *beside* a storm warning. I added the guard that positive
+  advice only fires when nothing more urgent did.
 
-Both were cases where the code's *behaviour* looked fine in a quick demo and was
-only exposed as wrong by thinking through the edge cases — which is precisely
-what the tests now encode.
+Every one looked fine in the code and fine on a quick read. They were exposed only
+by running the thing — which is exactly why those behaviours are now tests.
 
 ### 3. My most successful "steering" prompt
 
-> **"The advice engine is a pure function: it takes an event and a weather
-> snapshot and *returns a list of Advice objects*. It must never print and never
-> fetch anything. The CLI is the only module allowed to print. Put every
-> threshold in config, not in the rules."**
+Two kinds of steering mattered, and the second surprised me.
 
-That one constraint did all the heavy lifting. By forcing the brain to *return
-data instead of producing output*, the clean architecture fell out almost for
-free: the briefing orchestrator, the injectable weather lookup, the pure
-formatter, and — most importantly — the ability to write `assertIn("bus",
-advice_text)` as a real unit test. Nearly every "Exceptional" box on the rubric
-traces back to that single sentence about purity. Everything after it was
-elaboration.
+**The architectural prompt** that set the whole shape:
+> *"The advice engine is a pure function: it takes an event and a weather snapshot
+> and returns a list of Advice objects. It must never print and never fetch
+> anything. The CLI is the only module allowed to print. Put every threshold in
+> config, not in the rules."*
 
-### What I learned about context management
+By forcing the brain to *return data instead of producing output*, the clean
+architecture fell out for free — the injectable lookup, the pure formatter, and the
+ability to write `assertIn("bus", advice_text)` as a real test. Most "Exceptional"
+boxes on the rubric trace back to that one sentence.
 
-The PRD and `rules.md` were my **context anchors**. Whenever the AI drifted, the
-fastest fix wasn't a clever new prompt — it was *"re-read rule B1 and try
-again."* Writing the constraints down once, up front, and pointing back at them
-beat re-explaining my intent every turn. If I handed this PRD to a fresh model
-tomorrow, the decision table and the engineering rules are explicit enough that
-it would rebuild the same app — which, per the peer-review prompt, is the whole
-point.
+**But the steer that fixed the most bugs wasn't a prompt — it was running the app
+and pasting the wrong output back.** "I don't think `brief` is working properly,"
+with the actual five-line failure underneath, did more than any description could:
+it dropped the AI into the real failure and let it work backwards to the cause. With
+a capable agent, *demonstrating* the wrong behaviour is a higher-bandwidth steer than
+*explaining* the right one.
+
+### 4. Context management — keeping a long session coherent
+
+This wasn't one prompt; it was a long session that ran build → tests → docs → live
+debugging → deploy. Two habits kept the AI from drifting as the context grew:
+
+- **Durable anchors over repeated explanation.** The PRD and `rules.md` are the
+  project's memory. When the AI slipped, the cheapest fix was *"re-read rule B1 and
+  try again,"* not re-describing my intent. The decision table and the
+  acceptance-criteria→test map are *compressed context*: hand either to a fresh model
+  and it can rebuild the same app without me in the loop — which is exactly the
+  peer-review test.
+- **One concern per turn.** Fix the separation, run the tests, *then* tune a rule.
+  Bundled asks are where drift hides, so I kept each turn to a single change and
+  re-verified before moving on.
+
+### 5. Keeping the AI honest (oversight, not autopilot)
+
+The habit that mattered most: **I didn't take the AI's word that things worked.**
+When it claimed the weather integration was fine, I pushed for proof — and it had to
+admit it *couldn't* test live, because its sandbox had no internet. So I ran it on my
+own machine, watched real Honolulu weather come back (31 °C, "hot — hydrate"), and
+fed the output in. That loop — AI builds, I run and verify, AI fixes — is the
+opposite of "the AI did everything." Both runtime bugs above were caught by *me
+running it*, not by the AI noticing.
+
+Hand this PRD and these rules to a brand-new model tomorrow and it would rebuild the
+same app — but the *judgement* about when the output was actually wrong is the part
+that stayed human.
 
 ---
 
 ## A note on how this was built
 
 In the spirit of the assignment, the code was generated by an AI agent under my
-direction; I wrote the [PRD](specs/PRD.md) and [rules](docs/rules.md), set the
-architecture, reviewed every module against those constraints, and hand-fixed
-the logic errors described above. The reflection above is my own account of that
+direction. I owned the [PRD](specs/PRD.md) and [rules](docs/rules.md), set the
+architecture and its constraints, ran and verified the app at every step, caught the
+runtime bugs, and steered every fix. The reflection above is my own account of that
 collaboration.
